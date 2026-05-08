@@ -18,7 +18,8 @@ Status: migrated from the completed Hermes Agent implementation worktree after T
 - Local storage: default storage path is `$HERMES_HOME/mnemosyne/mnemosyne.sqlite3`.
 - Scoped retrieval: search and query-based forget merge user filters with runtime scope so normal tool calls cannot widen to another project/channel/thread.
 - Secret guardrails: secret-like text is rejected or redacted before persistence; secret-like metadata is rejected centrally in the store.
-- Conservative capture: raw transcripts are not stored by default. Built-in explicit memory writes can mirror into Mnemosyne; turn/session/delegation capture stays disabled unless explicitly enabled.
+- Single-write default: Mnemosyne is the active memory provider; built-in memory is legacy/import/read-only by default and is not mirrored unless explicit migration/debug mode enables it.
+- Conservative capture: raw transcripts are not stored by default. Turn/session/delegation capture stays disabled unless explicitly enabled.
 - Dashboard routes are local-only and inactive/read-only unless `memory.provider: mnemosyne` is active.
 
 ## Install into Hermes as a user memory provider
@@ -43,7 +44,11 @@ memory:
     max_tokens: 1500
     min_score: 0.72
     include_debug_citations: false
-    mirror_built_in_memory_writes: true
+    write_policy: single
+    replace_builtin_memory: true
+    legacy_builtin_read: false
+    legacy_builtin_import: true
+    mirror_built_in_memory_writes: false
     capture_completed_turns: false
     capture_session_end: false
     capture_pre_compress: false
@@ -56,7 +61,16 @@ Start a new Hermes session after changing provider config. Do not restart gatewa
 
 ## Provider tools
 
-When active, Mnemosyne exposes compact tools through Hermes MemoryManager:
+When active, Mnemosyne exposes compact tools through Hermes MemoryManager. Generic `memory_*` aliases route to the active provider (Mnemosyne) for natural “จำไว้ / memory this / ค้น memory” UX, while `mnemosyne_*` remains available for explicit debug.
+
+User-facing aliases:
+
+- `memory_remember(text, type?, metadata?, sensitivity?)`
+- `memory_search(query, filters?, top_k?)`
+- `memory_forget(id? | query?, filters?)`
+- `memory_inspect(id?)`
+
+Provider-specific debug tools:
 
 - `mnemosyne_remember(text, type?, metadata?, sensitivity?)`
 - `mnemosyne_search(query, filters?, top_k?)`
@@ -83,8 +97,8 @@ Standalone repo verification can reuse the Hermes source checkout for core impor
 
 ```bash
 cd /Users/tik/Projects/mnemosyne-memory-plugin
-PYTHONPATH="$PWD:/Users/tik/.hermes/hermes-agent-mnemosyne" python -m pytest tests/plugins/memory/test_mnemosyne_provider.py tests/plugins/test_mnemosyne_dashboard_plugin.py -o 'addopts=' -q
-PYTHONPATH="$PWD:/Users/tik/.hermes/hermes-agent-mnemosyne" python -m py_compile plugins/memory/mnemosyne/__init__.py plugins/memory/mnemosyne/dashboard/plugin_api.py tests/plugins/memory/test_mnemosyne_provider.py tests/plugins/test_mnemosyne_dashboard_plugin.py
+PYTHONPATH="$PWD:/Users/tik/.hermes/hermes-agent" python -m pytest tests/plugins/memory/test_mnemosyne_provider.py tests/plugins/memory/test_mnemosyne_cli.py tests/plugins/test_mnemosyne_dashboard_plugin.py -o 'addopts=' -q
+PYTHONPATH="$PWD:/Users/tik/.hermes/hermes-agent" python -m py_compile plugins/memory/mnemosyne/__init__.py plugins/memory/mnemosyne/cli.py plugins/memory/mnemosyne/dashboard/plugin_api.py tests/plugins/memory/test_mnemosyne_provider.py tests/plugins/memory/test_mnemosyne_cli.py tests/plugins/test_mnemosyne_dashboard_plugin.py
 node --check plugins/memory/mnemosyne/dashboard/dist/index.js
 git diff --check
 ```

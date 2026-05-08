@@ -26,7 +26,11 @@ DEFAULT_MNEMOSYNE_CONFIG: Dict[str, Any] = {
     "max_tokens": 1500,
     "min_score": 0.72,
     "include_debug_citations": False,
-    "mirror_built_in_memory_writes": True,
+    "mirror_built_in_memory_writes": False,
+    "write_policy": "single",
+    "replace_builtin_memory": True,
+    "legacy_builtin_read": False,
+    "legacy_builtin_import": True,
     "capture_completed_turns": False,
     "capture_session_end": False,
     "capture_pre_compress": False,
@@ -95,6 +99,13 @@ _TOOL_NAMES = {
     "forget": "mnemosyne_forget",
     "inspect": "mnemosyne_inspect",
 }
+_GENERIC_TOOL_NAMES = {
+    "remember": "memory_remember",
+    "search": "memory_search",
+    "forget": "memory_forget",
+    "inspect": "memory_inspect",
+}
+_TOOL_ALIASES = {value: _TOOL_NAMES[key] for key, value in _GENERIC_TOOL_NAMES.items()}
 
 _SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{32,}"),
@@ -158,7 +169,11 @@ def _normalize_config(config: Dict[str, Any], hermes_home: str) -> Dict[str, Any
         "max_tokens": _coerce_int(merged.get("max_tokens"), 1500, minimum=1),
         "min_score": _coerce_float(merged.get("min_score"), 0.72),
         "include_debug_citations": _coerce_bool(merged.get("include_debug_citations"), False),
-        "mirror_built_in_memory_writes": _coerce_bool(merged.get("mirror_built_in_memory_writes"), True),
+        "mirror_built_in_memory_writes": _coerce_bool(merged.get("mirror_built_in_memory_writes"), False),
+        "write_policy": str(merged.get("write_policy") or "single"),
+        "replace_builtin_memory": _coerce_bool(merged.get("replace_builtin_memory"), True),
+        "legacy_builtin_read": _coerce_bool(merged.get("legacy_builtin_read"), False),
+        "legacy_builtin_import": _coerce_bool(merged.get("legacy_builtin_import"), True),
         "capture_completed_turns": _coerce_bool(merged.get("capture_completed_turns"), False),
         "capture_session_end": _coerce_bool(merged.get("capture_session_end"), False),
         "capture_pre_compress": _coerce_bool(merged.get("capture_pre_compress"), False),
@@ -437,7 +452,7 @@ def _compact_memory(item: Mapping[str, Any], *, include_metadata: bool = False) 
 _MNEMOSYNE_TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "name": _TOOL_NAMES["remember"],
-        "description": "Store one explicit Mnemosyne memory in local profile-scoped SQLite. Never store secrets or raw transcripts.",
+        "description": "Store one explicit Mnemosyne memory in local profile-scoped SQLite. Never store secrets, raw transcripts, or temporary task progress.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -726,6 +741,48 @@ class MnemosyneSQLiteStore:
             cur = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             return cur.rowcount > 0
 
+    def stats(self) -> Dict[str, Any]:
+        with self._connect() as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+            rows = conn.execute("SELECT type, COUNT(*) AS count FROM memories GROUP BY type ORDER BY type").fetchall()
+        return {"total": total, "by_type": {str(row["type"]): int(row["count"]) for row in rows}}
+
+
+class MnemosyneMemoryService:
+    """Small service facade so CLI, tools, dashboard, and provider share store semantics."""
+
+    def __init__(self, store: MnemosyneSQLiteStore) -> None:
+        self.store = store
+
+    def remember(self, *, text: str, type: str = "fact", sensitivity: str = "normal", metadata: Optional[Mapping[str, Any]] = None) -> str:
+        return self.store.insert(text=text, type=type, sensitivity=sensitivity, metadata=metadata, **_metadata_scope(metadata or {}))
+
+    def search(self, query: str = "", *, filters: Optional[Mapping[str, Any]] = None, limit: int = 10) -> List[Dict[str, Any]]:
+        return self.store.search(query, filters=filters, limit=limit)
+
+    def forget(self, *, id: str = "", query: str = "", filters: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        if id:
+            if not self.store.get(id):
+                return {"success": False, "error": "Memory not found"}
+            deleted = self.store.delete(id)
+            return {"success": bool(deleted), "forgotten": 1 if deleted else 0, "id": id}
+        matches = self.store.search(query, filters=filters, limit=2)
+        if not matches:
+            return {"success": False, "error": "Memory not found"}
+        if len(matches) > 1:
+            return {"success": False, "error": "Query matched multiple memories; provide id"}
+        target_id = str(matches[0]["id"])
+        deleted = self.store.delete(target_id)
+        return {"success": bool(deleted), "forgotten": 1 if deleted else 0, "id": target_id}
+
+    def inspect(self, id: str = "") -> Dict[str, Any]:
+        if id:
+            item = self.store.get(id)
+            if item is None:
+                return {"success": False, "error": "Memory not found"}
+            return {"success": True, "item": _compact_memory(item, include_metadata=True)}
+        return {"success": True, "counts": self.store.stats()}
+
 
 class MnemosyneMemoryProvider(MemoryProvider):
     """Local Mnemosyne memory provider with profile-scoped SQLite storage."""
@@ -770,7 +827,26 @@ class MnemosyneMemoryProvider(MemoryProvider):
             },
             {
                 "key": "mirror_built_in_memory_writes",
-                "description": "Mirror explicit built-in memory tool writes",
+                "description": "Mirror explicit built-in memory tool writes (migration/debug only; default single-write)",
+                "default": "false",
+                "choices": ["false", "true"],
+            },
+            {"key": "write_policy", "description": "Memory write policy", "default": "single", "choices": ["single", "mirror"]},
+            {
+                "key": "replace_builtin_memory",
+                "description": "Treat Mnemosyne as the active replacement for built-in memory writes",
+                "default": "true",
+                "choices": ["false", "true"],
+            },
+            {
+                "key": "legacy_builtin_read",
+                "description": "Read legacy built-in memory during normal retrieval",
+                "default": "false",
+                "choices": ["false", "true"],
+            },
+            {
+                "key": "legacy_builtin_import",
+                "description": "Allow reviewed import from legacy built-in memory",
                 "default": "true",
                 "choices": ["false", "true"],
             },
@@ -966,7 +1042,7 @@ class MnemosyneMemoryProvider(MemoryProvider):
         memory tool after that tool has already decided to persist a durable
         fact/profile entry.
         """
-        if not _coerce_bool(self._config.get("mirror_built_in_memory_writes"), True):
+        if not _coerce_bool(self._config.get("mirror_built_in_memory_writes"), False):
             return
         if action not in {"add", "replace"} or not str(content or "").strip():
             return
@@ -1117,25 +1193,42 @@ class MnemosyneMemoryProvider(MemoryProvider):
             if item is None:
                 return _tool_error("Memory not found")
             return _compact_json({"success": True, "item": _compact_memory(item, include_metadata=True)})
-        items = store.search("", limit=1)
-        return _compact_json(
-            {
-                "success": True,
-                "provider": self.name,
-                "initialized": self._initialized,
-                "storage_path": str(store.storage_path),
-                "db_path": str(store.db_path),
-                "sample_count": len(items),
-            }
-        )
+        status = {
+            "success": True,
+            "provider": self.name,
+            "write_policy": str(self._config.get("write_policy") or "single"),
+            "replace_builtin_memory": _coerce_bool(self._config.get("replace_builtin_memory"), True),
+            "legacy_builtin_read": _coerce_bool(self._config.get("legacy_builtin_read"), False),
+            "legacy_builtin_import": _coerce_bool(self._config.get("legacy_builtin_import"), True),
+            "initialized": self._initialized,
+            "storage_path": str(store.storage_path),
+            "db_path": str(store.db_path),
+            "counts": store.stats(),
+            "retrieval": {
+                "retrieve_on_every_turn": _coerce_bool(self._config.get("retrieve_on_every_turn"), False),
+                "max_memories": _coerce_int(self._config.get("max_memories"), 5, minimum=1),
+                "max_tokens": _coerce_int(self._config.get("max_tokens"), 1500, minimum=1),
+                "min_score": _coerce_float(self._config.get("min_score"), 0.72),
+            },
+        }
+        return _compact_json(status)
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        """Expose compact explicit Mnemosyne tools through MemoryManager."""
-        return copy.deepcopy(_MNEMOSYNE_TOOL_SCHEMAS)
+        """Expose compact Mnemosyne debug tools plus generic active-provider aliases."""
+        schemas = copy.deepcopy(_MNEMOSYNE_TOOL_SCHEMAS)
+        for schema in copy.deepcopy(_MNEMOSYNE_TOOL_SCHEMAS):
+            for action, specific_name in _TOOL_NAMES.items():
+                if schema.get("name") == specific_name:
+                    schema["name"] = _GENERIC_TOOL_NAMES[action]
+                    schema["description"] = schema.get("description", "").replace("Mnemosyne", "active memory provider (Mnemosyne)")
+                    schemas.append(schema)
+                    break
+        return schemas
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs: Any) -> str:
         """Dispatch Mnemosyne provider tool calls and keep errors compact."""
         safe_args = args if isinstance(args, dict) else {}
+        tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
         if tool_name == _TOOL_NAMES["remember"]:
             return self._handle_remember(safe_args)
         if tool_name == _TOOL_NAMES["search"]:

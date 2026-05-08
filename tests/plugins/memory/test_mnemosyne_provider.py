@@ -26,7 +26,15 @@ def test_load_memory_provider_discovers_mnemosyne():
 
 def test_default_config_keeps_mnemosyne_opt_in():
     assert DEFAULT_CONFIG["memory"]["provider"] == ""
-    assert DEFAULT_CONFIG["memory"]["mnemosyne"] == DEFAULT_MNEMOSYNE_CONFIG
+    # Standalone plugins may be tested against a Hermes checkout that has not yet
+    # bundled Mnemosyne defaults. The plugin-owned defaults remain authoritative.
+    assert DEFAULT_MNEMOSYNE_CONFIG["write_policy"] == "single"
+    assert DEFAULT_MNEMOSYNE_CONFIG["replace_builtin_memory"] is True
+    assert DEFAULT_MNEMOSYNE_CONFIG["legacy_builtin_read"] is False
+    assert DEFAULT_MNEMOSYNE_CONFIG["legacy_builtin_import"] is True
+    assert DEFAULT_MNEMOSYNE_CONFIG["mirror_built_in_memory_writes"] is False
+    assert DEFAULT_MNEMOSYNE_CONFIG["retrieve_on_every_turn"] is False
+
 
 
 def test_initialize_tolerates_missing_mnemosyne_config(tmp_path):
@@ -48,6 +56,10 @@ def test_initialize_tolerates_missing_mnemosyne_config(tmp_path):
         "mnemosyne_search",
         "mnemosyne_forget",
         "mnemosyne_inspect",
+        "memory_remember",
+        "memory_search",
+        "memory_forget",
+        "memory_inspect",
     }
 
 
@@ -85,7 +97,11 @@ def test_save_config_writes_provider_defaults_without_secrets(tmp_path, monkeypa
         "max_tokens": 1200,
         "min_score": 0.8,
         "include_debug_citations": False,
-        "mirror_built_in_memory_writes": True,
+        "mirror_built_in_memory_writes": False,
+        "write_policy": "single",
+        "replace_builtin_memory": True,
+        "legacy_builtin_read": False,
+        "legacy_builtin_import": True,
         "capture_completed_turns": False,
         "capture_session_end": False,
         "capture_pre_compress": False,
@@ -208,12 +224,17 @@ def test_provider_exposes_compact_mnemosyne_tool_schemas_and_memory_manager_rout
         "mnemosyne_search",
         "mnemosyne_forget",
         "mnemosyne_inspect",
+        "memory_remember",
+        "memory_search",
+        "memory_forget",
+        "memory_inspect",
     }
     assert manager.has_tool("mnemosyne_remember") is True
+    assert manager.has_tool("memory_remember") is True
 
     result = json.loads(
         manager.handle_tool_call(
-            "mnemosyne_remember",
+            "memory_remember",
             {
                 "text": "Hermes Mnemosyne routes tools through MemoryManager.",
                 "type": "fact",
@@ -264,13 +285,19 @@ def test_mnemosyne_remember_search_inspect_and_forget_are_scoped_and_compact(tmp
         },
     )
     inspected = _tool_json(provider, "mnemosyne_inspect", {"id": remembered["id"]})
-    forgotten = _tool_json(provider, "mnemosyne_forget", {"id": remembered["id"]})
+    status = _tool_json(provider, "memory_inspect", {})
+    forgotten = _tool_json(provider, "memory_forget", {"id": remembered["id"]})
 
     assert remembered["success"] is True
     assert set(remembered) == {"success", "id", "type", "sensitivity"}
     assert [item["id"] for item in found["items"]] == [remembered["id"]]
     assert set(found["items"][0]) == {"id", "text", "type", "project", "repo", "branch", "sensitivity", "updated_at"}
     assert inspected["item"]["metadata"]["tags"] == ["cnc"]
+    assert status["provider"] == "mnemosyne"
+    assert status["write_policy"] == "single"
+    assert status["counts"]["total"] == 2
+    assert status["counts"]["by_type"]["preference"] == 1
+    assert status["retrieval"]["max_memories"] == 5
     assert forgotten == {"success": True, "forgotten": 1, "id": remembered["id"]}
     assert provider._store.get(remembered["id"]) is None
 
@@ -552,14 +579,23 @@ def test_mnemosyne_search_top_k_is_clamped_to_twenty(tmp_path):
     assert len(result["items"]) == 20
 
 
-def test_on_memory_write_mirrors_explicit_builtin_writes_with_metadata_and_secret_safety(tmp_path):
+def test_on_memory_write_does_not_mirror_builtin_writes_by_default_and_can_be_enabled(tmp_path):
     provider = _initialized_provider(tmp_path, chat_id="channel-1", thread_id="thread-1")
     provider._metadata.update({"project": "Hermes", "repo": "hermes-agent"})
 
     provider.on_memory_write(
         "add",
         "user",
-        "คุณติ๊ก prefers scoped Mnemosyne memory mirrors.",
+        "คุณติ๊ก prefers scoped Mnemosyne memory mirrors only when migration mode is enabled.",
+        metadata={"tool_name": "memory", "write_origin": "builtin", "source_message_id": "msg-1"},
+    )
+    assert provider._store.search("migration mode") == []
+
+    provider._config["mirror_built_in_memory_writes"] = True
+    provider.on_memory_write(
+        "add",
+        "user",
+        "คุณติ๊ก prefers scoped Mnemosyne memory mirrors only when migration mode is enabled.",
         metadata={"tool_name": "memory", "write_origin": "builtin", "source_message_id": "msg-1"},
     )
     provider.on_memory_write("add", "memory", "token sk-" + "a" * 48)
@@ -567,7 +603,7 @@ def test_on_memory_write_mirrors_explicit_builtin_writes_with_metadata_and_secre
     mirrored = provider._store.search("Mnemosyne", filters={"type": "user_profile"})
     assert len(mirrored) == 1
     item = mirrored[0]
-    assert item["text"] == "คุณติ๊ก prefers scoped Mnemosyne memory mirrors."
+    assert item["text"] == "คุณติ๊ก prefers scoped Mnemosyne memory mirrors only when migration mode is enabled."
     assert item["project"] == "Hermes"
     assert item["repo"] == "hermes-agent"
     assert item["discord_channel_id"] == "channel-1"
