@@ -1,6 +1,6 @@
 # Mnemosyne Standalone Status
 
-Updated: 2026-05-08 13:59 +07
+Updated: 2026-05-08 14:05 +07
 
 The completed Mnemosyne memory provider was migrated into this standalone repo after remediation task `t_3fbfbb00` fixed the T12 final-review blockers.
 
@@ -19,8 +19,8 @@ The completed Mnemosyne memory provider was migrated into this standalone repo a
 
 ## Push status
 
-- Local commit created on `main`: `0bae5d6 Migrate Mnemosyne memory plugin`.
-- Remote push to `https://github.com/CHAKRI-S/mnemosyne-memory-plugin.git` is blocked in this worker environment because neither HTTPS GitHub credentials nor GitHub CLI auth nor SSH auth are available (`git push` failed with `could not read Username`; `gh auth status` reports not logged in; SSH public-key auth denied).
+- Local migration commits created on `main`: `0bae5d6 Migrate Mnemosyne memory plugin` and `1c911b9 Document migration push blocker`.
+- Remote push to `https://github.com/CHAKRI-S/mnemosyne-memory-plugin.git` was retried from the authenticated parent session and succeeded. `origin/main` now points at `1c911b9` before this status update.
 
 ## Install summary
 
