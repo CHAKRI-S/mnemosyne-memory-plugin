@@ -1,0 +1,4 @@
+name: mnemosyne
+version: 0.1.0
+description: "Mnemosyne local memory provider — opt-in, profile-scoped SQLite storage with scoped retrieval, dashboard review, and model-facing tools."
+requires_env: []

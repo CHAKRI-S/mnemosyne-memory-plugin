@@ -1,0 +1,14 @@
+{
+  "name": "mnemosyne",
+  "label": "Mnemosyne",
+  "description": "Review local Mnemosyne memories with scoped filters, injection score previews, and approve/delete/merge/edit controls",
+  "icon": "Database",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/mnemosyne",
+    "position": "after:plugins"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
