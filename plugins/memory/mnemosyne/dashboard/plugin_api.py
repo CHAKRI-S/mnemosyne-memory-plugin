@@ -8,20 +8,42 @@ secrets from config/env.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from hermes_constants import get_hermes_home
-from plugins.memory.mnemosyne import (
-    MnemosyneSecretError,
-    MnemosyneSQLiteStore,
-    _FILTER_COLUMNS,
-    _load_config,
-    _score_memory,
-)
+
+try:
+    from plugins.memory.mnemosyne import (
+        MnemosyneSecretError,
+        MnemosyneSQLiteStore,
+        _FILTER_COLUMNS,
+        _load_config,
+        _score_memory,
+    )
+except ModuleNotFoundError:
+    # User-installed plugins live at ~/.hermes/plugins/<name>/, while the repo
+    # source lives at plugins/memory/<name>/. Hermes mounts dashboard API files by
+    # path, so support both layouts without requiring Hermes core path hacks.
+    plugin_root = Path(__file__).resolve().parents[1]
+    module_name = "hermes_user_plugin_mnemosyne"
+    spec = importlib.util.spec_from_file_location(module_name, plugin_root / "__init__.py")
+    if spec is None or spec.loader is None:
+        raise
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    MnemosyneSecretError = module.MnemosyneSecretError
+    MnemosyneSQLiteStore = module.MnemosyneSQLiteStore
+    _FILTER_COLUMNS = module._FILTER_COLUMNS
+    _load_config = module._load_config
+    _score_memory = module._score_memory
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
