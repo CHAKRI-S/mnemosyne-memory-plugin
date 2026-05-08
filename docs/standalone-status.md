@@ -17,6 +17,11 @@ The completed Mnemosyne memory provider was migrated into this standalone repo a
 - Source verification in `/Users/tik/.hermes/hermes-agent-mnemosyne`: `97 passed`; py_compile, dashboard JS syntax, and `git diff --check` passed.
 - Standalone verification in this repo with source checkout on `PYTHONPATH`: `30 passed`; py_compile, dashboard JS syntax, and `git diff --check` passed.
 
+## Push status
+
+- Local commit created on `main`: `0bae5d6 Migrate Mnemosyne memory plugin`.
+- Remote push to `https://github.com/CHAKRI-S/mnemosyne-memory-plugin.git` is blocked in this worker environment because neither HTTPS GitHub credentials nor GitHub CLI auth nor SSH auth are available (`git push` failed with `could not read Username`; `gh auth status` reports not logged in; SSH public-key auth denied).
+
 ## Install summary
 
 Install as a user memory provider with:
