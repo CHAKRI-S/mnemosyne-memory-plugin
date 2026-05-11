@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -46,12 +47,36 @@ except ModuleNotFoundError:
     _score_memory = module._score_memory
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+_ALLOWED_PUBLIC_HOSTS = {
+    host.strip().lower()
+    for host in os.getenv("MNEMOSYNE_DASHBOARD_ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+}
+
+
+def _request_host(request: Request) -> str:
+    host_header = request.headers.get("host", "")
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        close = host.find("]")
+        return host[1:close] if close != -1 else host.strip("[]")
+    return host.rsplit(":", 1)[0] if ":" in host else host
 
 
 def _require_local_request(request: Request) -> None:
-    host = request.client.host if request.client else ""
-    if host not in _LOOPBACK_HOSTS:
-        raise HTTPException(status_code=403, detail="Mnemosyne dashboard API is local-only")
+    client_host = request.client.host if request.client else ""
+    if client_host in _LOOPBACK_HOSTS:
+        return
+
+    # Uvicorn trusts proxy headers from loopback by default. Behind Cloudflare
+    # Tunnel, request.client.host can therefore become the viewer's public IP
+    # from X-Forwarded-For even though the TCP peer is local cloudflared.
+    # Allow explicit public dashboard hostnames only when Cloudflare Access has
+    # authenticated the request and passed its JWT assertion to the origin.
+    if _request_host(request) in _ALLOWED_PUBLIC_HOSTS and request.headers.get("cf-access-jwt-assertion"):
+        return
+
+    raise HTTPException(status_code=403, detail="Mnemosyne dashboard API is local-only")
 
 
 router = APIRouter(dependencies=[Depends(_require_local_request)])
