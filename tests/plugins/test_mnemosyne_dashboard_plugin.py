@@ -121,6 +121,17 @@ def test_contract_exposes_filters_and_controls(client):
     assert data["controls"]["merge"].startswith("POST")
 
 
+def test_dashboard_formats_iso_timestamps_with_iso_time_ago():
+    repo_root = Path(__file__).resolve().parents[2]
+    bundle = repo_root / "plugins" / "memory" / "mnemosyne" / "dashboard" / "dist" / "index.js"
+    script = bundle.read_text(encoding="utf-8")
+
+    assert "function memoryTimeAgo(value)" in script
+    assert "isoTimeAgo" in script
+    assert "timeAgo(m.updated_at)" not in script
+    assert "memoryTimeAgo(m.updated_at)" in script
+
+
 def test_list_filters_by_project_repo_branch_channel_and_sensitivity(client):
     r = client.get(
         "/api/plugins/mnemosyne/memories",

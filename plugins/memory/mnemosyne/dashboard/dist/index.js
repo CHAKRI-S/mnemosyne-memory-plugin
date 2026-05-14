@@ -7,11 +7,18 @@
   const h = React.createElement;
   const { Card, CardContent, Badge, Button, Input, Label } = SDK.components;
   const { useCallback, useEffect, useMemo, useState } = SDK.hooks;
-  const { cn, timeAgo } = SDK.utils;
+  const { cn, timeAgo, isoTimeAgo } = SDK.utils;
   const API = "/api/plugins/mnemosyne";
   const FILTERS = ["project", "repo", "branch", "discord_channel_id", "discord_thread_id", "type", "sensitivity"];
 
   function compactId(id) { return String(id || "").slice(0, 8); }
+  function memoryTimeAgo(value) {
+    if (value === undefined || value === null || value === "") return "";
+    if (typeof value === "number") return timeAgo(value);
+    const parsed = Date.parse(String(value));
+    if (Number.isNaN(parsed)) return "unknown";
+    return isoTimeAgo ? isoTimeAgo(String(value)) : timeAgo(Math.floor(parsed / 1000));
+  }
   function qs(params) {
     const out = new URLSearchParams();
     Object.entries(params || {}).forEach(([k, v]) => { if (v !== undefined && v !== null && String(v).trim() !== "") out.set(k, String(v)); });
@@ -40,7 +47,7 @@
           m.sensitivity && Tag({ children: m.sensitivity }),
           meta.review_status && Tag({ children: meta.review_status }),
         ),
-        h("span", { className: "text-xs text-muted-foreground" }, m.updated_at ? timeAgo(m.updated_at) : ""),
+        h("span", { className: "text-xs text-muted-foreground" }, memoryTimeAgo(m.updated_at)),
       ),
       h("p", { className: "mnemo-text mt-2 text-sm" }, m.text || "(empty)"),
       h("div", { className: "mnemo-tags mt-2 text-xs" },
